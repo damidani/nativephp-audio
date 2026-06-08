@@ -26,6 +26,32 @@ class Audio
     }
 
     /**
+     * Play a live radio stream from a mountpoint.
+     *
+     * @param  string       $mountpoint  Stream mountpoint or URL
+     * @param  array        $options     Optional: title, artist, album, artwork, metadata
+     */
+    public function playStream(string $mountpoint, array $options = []): bool
+    {
+        if (function_exists('nativephp_call')) {
+            $params = array_merge($options, [
+                'mountpoint' => $mountpoint,
+                'isStream' => true,
+                'streamType' => 'radio',
+                'duration' => null,
+            ]);
+
+            $result = nativephp_call('Audio.playStream', json_encode($params));
+
+            if ($result) {
+                $decoded = json_decode($result, true);
+                return (bool) ($decoded['success'] ?? false);
+            }
+        }
+        return false;
+    }
+
+    /**
      * Load an audio file without starting playback immediately.
      */
     public function load(string $url, array $options = []): bool

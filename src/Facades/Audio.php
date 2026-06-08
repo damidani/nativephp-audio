@@ -6,6 +6,7 @@ use Illuminate\Support\Facades\Facade;
 
 /**
  * @method static bool play(string $url, array $options = [])
+ * @method static bool playStream(string $mountpoint, array $options = [])
  * @method static bool load(string $url, array $options = [])
  * @method static bool pause()
  * @method static bool resume()
