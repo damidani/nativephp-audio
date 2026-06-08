@@ -384,15 +384,26 @@ class AudioFunctions: NSObject {
         return ["success": true]
     }
 
-    @objc static func SetMetadata(_ parameters: [String: Any]) -> [String: Any] {
+    private static func applyMetadata(_ parameters: [String: Any], includeClassicalFields: Bool = true) {
         if let title = parameters["title"] as? String { metaTitle = title }
         if let artist = parameters["artist"] as? String { metaArtist = artist }
         if let album = parameters["album"] as? String { metaAlbum = album }
-        if let d = (parameters["duration"] as? NSNumber)?.doubleValue { metaDuration = d }
+        if includeClassicalFields, let d = (parameters["duration"] as? NSNumber)?.doubleValue { metaDuration = d }
         if let artwork = parameters["artwork"] as? String { metaArtworkSource = artwork }
-        if let clip = parameters["clip"] as? String { metaClip = clip }
+        if includeClassicalFields, let clip = parameters["clip"] as? String { metaClip = clip }
         if let metadata = parameters["metadata"] as? [String: Any] { metaMetadata = metadata }
+    }
+
+    @objc static func SetMetadata(_ parameters: [String: Any]) -> [String: Any] {
+        applyMetadata(parameters)
         refreshNowPlayingInfo()
+        return ["success": true]
+    }
+
+    @objc static func UpdateStreamMetadata(_ parameters: [String: Any]) -> [String: Any] {
+        applyMetadata(parameters, includeClassicalFields: false)
+        refreshNowPlayingInfo()
+        sendEvent("StreamMetadataChanged", ["track": trackPayload(), "metadata": parameters])
         return ["success": true]
     }
 
