@@ -9,6 +9,8 @@ class AudioFunctions: NSObject {
     private static var player: AVPlayer?
     private static var playerItem: AVPlayerItem?
     private static var currentURL = ""
+    private static var isStream = false
+    private static var streamMountpoint: String?
     
     // MARK: - Stored Metadata
     private static var metaTitle: String?
@@ -66,6 +68,11 @@ class AudioFunctions: NSObject {
 
     private static func trackPayload() -> [String: Any] {
         var t: [String: Any] = ["url": currentURL]
+        if isStream {
+            t["isStream"] = true
+            t["streamType"] = "radio"
+            if let mountpoint = streamMountpoint { t["mountpoint"] = mountpoint }
+        }
         if let title = metaTitle { t["title"] = title }
         if let artist = metaArtist { t["artist"] = artist }
         if let album = metaAlbum { t["album"] = album }
@@ -159,6 +166,8 @@ class AudioFunctions: NSObject {
         player?.pause()
         player = nil
         playerItem = nil
+        isStream = false
+        streamMountpoint = nil
         completionObserver = nil
         failureObserver = nil
         bufferingObservation?.invalidate()
@@ -171,6 +180,53 @@ class AudioFunctions: NSObject {
         return shuffledOrder[idx]
     }
 
+    private static func metadataDouble(_ value: Any?) -> Double? {
+        if let number = value as? NSNumber { return number.doubleValue }
+        if let double = value as? Double { return double }
+        if let string = value as? String { return Double(string) }
+        return nil
+    }
+
+    private static func applyInitialMetadata(_ parameters: [String: Any], duration: Double? = nil) {
+        metaTitle = parameters["title"] as? String
+        metaArtist = parameters["artist"] as? String
+        metaAlbum = parameters["album"] as? String
+        metaDuration = duration ?? metadataDouble(parameters["duration"])
+        metaArtworkSource = parameters["artwork"] as? String
+        metaClip = parameters["clip"] as? String
+        metaMetadata = parameters["metadata"] as? [String: Any]
+    }
+
+    private static func stringParameter(_ parameters: [String: Any], keys: [String]) -> String? {
+        for key in keys {
+            if let value = parameters[key] as? String {
+                let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.isEmpty { return trimmed }
+            }
+        }
+        return nil
+    }
+
+    private static func webURL(from value: String) -> URL? {
+        guard let url = URL(string: value),
+              let scheme = url.scheme?.lowercased(),
+              ["http", "https"].contains(scheme),
+              url.host != nil else { return nil }
+        return url
+    }
+
+    private static func resolveStreamURL(from source: String, parameters: [String: Any]) -> URL? {
+        if let url = webURL(from: source) { return url }
+        if URL(string: source)?.scheme != nil { return nil }
+
+        guard let server = stringParameter(parameters, keys: ["serverUrl", "serverURL", "baseUrl", "baseURL", "host"]),
+              let baseURL = webURL(from: server) else { return nil }
+
+        let mountpoint = source.hasPrefix("/") ? String(source.dropFirst()) : source
+        let baseString = baseURL.absoluteString.hasSuffix("/") ? baseURL.absoluteString : baseURL.absoluteString + "/"
+        return URL(string: mountpoint, relativeTo: URL(string: baseString))?.absoluteURL
+    }
+
     private static func playTrackAt(index: Int, reason: String = "user") {
         guard index >= 0, index < playlist.count else { return }
         
@@ -181,6 +237,9 @@ class AudioFunctions: NSObject {
         playlistIndex = index
         let track = playlist[effectiveIndex(index)]
         
+        isStream = false
+        streamMountpoint = nil
+
         if let urlStr = track["url"] as? String {
             let url: URL
             if let webURL = URL(string: urlStr), webURL.scheme != nil {
@@ -195,17 +254,11 @@ class AudioFunctions: NSObject {
             if playbackRate != 1.0 { player?.rate = playbackRate }
         }
         
-        metaTitle = track["title"] as? String
-        metaArtist = track["artist"] as? String
-        metaAlbum = track["album"] as? String
-        metaDuration = (track["duration"] as? NSNumber)?.doubleValue
-        metaArtworkSource = track["artwork"] as? String
-        metaClip = track["clip"] as? String
-        metaMetadata = track["metadata"] as? [String: Any]
+        applyInitialMetadata(track)
 
         var changedPayload: [String: Any] = ["index": index, "reason": reason, "track": trackPayload()]
-        if let li = lastIdx {
-            changedPayload["lastIndex"] = li
+        if lastIdx >= 0 {
+            changedPayload["lastIndex"] = lastIdx
             changedPayload["lastPosition"] = lastPos
             if let lt = lastTrack { changedPayload["lastTrack"] = lt }
         }
@@ -240,7 +293,7 @@ class AudioFunctions: NSObject {
         
         completionObserver = NotificationCenter.default.addObserver(forName: .AVPlayerItemDidPlayToEndTime, object: playerItem, queue: .main) { _ in
             sendEvent("PlaybackCompleted", ["track": trackPayload()])
-            nextTrackInternal()
+            if !isStream { nextTrackInternal() }
         }
     }
 
@@ -317,6 +370,40 @@ class AudioFunctions: NSObject {
         playlist = [parameters]
         playlistIndex = -1
         playTrackAt(index: 0)
+        return ["success": true]
+    }
+
+    @objc static func PlayStream(_ parameters: [String: Any]) -> [String: Any] {
+        guard let mountpoint = stringParameter(parameters, keys: ["mountpoint", "url"]),
+              let url = resolveStreamURL(from: mountpoint, parameters: parameters) else {
+            return ["success": false, "error": "Invalid stream mountpoint or URL"]
+        }
+
+        playlist = []
+        playlistIndex = -1
+        isStream = true
+        streamMountpoint = mountpoint
+        metaDuration = nil
+        currentURL = url.absoluteString
+
+        preparePlayer(url: url)
+        applyInitialMetadata(parameters, duration: nil)
+        metaDuration = nil
+
+        player?.play()
+        if playbackRate != 1.0 { player?.rate = playbackRate }
+
+        refreshNowPlayingInfo()
+        setupRemoteCommands()
+        startProgressTimer()
+
+        sendEvent("PlaybackStarted", [
+            "track": trackPayload(),
+            "isStream": true,
+            "streamType": "radio",
+            "mountpoint": mountpoint
+        ])
+
         return ["success": true]
     }
 
