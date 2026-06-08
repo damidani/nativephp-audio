@@ -427,6 +427,21 @@ class AudioFunctions {
             if (shuffleMode) shuffledOrder.shuffle()
         }
 
+        private fun applyMetadata(p: Map<String, Any>, includeClassicalFields: Boolean = true) {
+            (p["title"] as? String)?.let { metaTitle = it }
+            (p["artist"] as? String)?.let { metaArtist = it }
+            (p["album"] as? String)?.let { metaAlbum = it }
+            if (includeClassicalFields) {
+                (p["duration"] as? Number)?.let { metaDurationMs = it.toLong() * 1000 }
+            }
+            (p["artwork"] as? String)?.let { metaArtworkSource = it }
+            if (includeClassicalFields) {
+                (p["clip"] as? String)?.let { metaClip = it }
+            }
+            @Suppress("UNCHECKED_CAST")
+            (p["metadata"] as? Map<String, Any>)?.let { metaMetadata = it }
+        }
+
         // ── Bridge Functions ──────────────────────────────────────────────────
     }
 
@@ -633,11 +648,21 @@ class AudioFunctions {
     class GetCurrentPosition(private val activity: FragmentActivity) : BridgeFunction { override fun execute(p: Map<String, Any>): Map<String, Any> { return mapOf("position" to (mediaPlayer?.currentPosition ?: 0) / 1000.0) } }
     class SetMetadata(private val activity: FragmentActivity) : BridgeFunction {
         override fun execute(p: Map<String, Any>): Map<String, Any> {
-            metaTitle = p["title"] as? String
-            metaArtist = p["artist"] as? String
-            metaAlbum = p["album"] as? String
-            metaDurationMs = (p["duration"] as? Number)?.toLong()?.let { it * 1000 }
+            applyMetadata(p)
             mediaSession?.setMetadata(buildMetadata())
+            appContext?.let { AudioService.refreshState(it) }
+            return mapOf("success" to true)
+        }
+    }
+
+    class UpdateStreamMetadata(private val activity: FragmentActivity) : BridgeFunction {
+        override fun execute(p: Map<String, Any>): Map<String, Any> {
+            activityRef = WeakReference(activity)
+            appContext = activity.applicationContext
+            applyMetadata(p, includeClassicalFields = false)
+            mediaSession?.setMetadata(buildMetadata())
+            appContext?.let { AudioService.refreshState(it) }
+            sendEvent("StreamMetadataChanged", mapOf("track" to trackPayload(), "metadata" to p))
             return mapOf("success" to true)
         }
     }
