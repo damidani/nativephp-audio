@@ -23,6 +23,7 @@ const audioPlayer = {
     setMetadata: async (metadata) => {
         return await window.nativephp.call('Audio.setMetadata', metadata);
     },
+    updateStreamMetadata: async (metadata) => window.nativephp.call('Audio.updateStreamMetadata', metadata),
     setPlaybackRate: async (rate) => {
         return await window.nativephp.call('Audio.setPlaybackRate', { rate });
     },

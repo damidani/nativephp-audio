@@ -192,6 +192,25 @@ class Audio
     }
 
     /**
+     * Update live stream metadata while playback continues.
+     *
+     * Prefer this method during live radio streams when the current song,
+     * artist, album, artwork, or custom metadata changes without loading
+     * a new media item.
+     */
+    public function updateStreamMetadata(array $metadata): bool
+    {
+        if (function_exists('nativephp_call')) {
+            $result = nativephp_call('Audio.updateStreamMetadata', json_encode($metadata));
+            if ($result) {
+                $decoded = json_decode($result, true);
+                return (bool) ($decoded['success'] ?? false);
+            }
+        }
+        return false;
+    }
+
+    /**
      * Drain background events (useful when app resumes).
      */
     public function drainEvents(): array
