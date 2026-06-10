@@ -9,7 +9,7 @@ class AudioFunctions: NSObject {
     private static var player: AVPlayer?
     private static var playerItem: AVPlayerItem?
     private static var currentURL = ""
-    private static var isStream = false
+    private static var isStream: Bool = false
     private static var streamMountpoint: String?
     
     // MARK: - Stored Metadata
@@ -80,11 +80,14 @@ class AudioFunctions: NSObject {
         if let artwork = metaArtworkSource { t["artwork"] = artwork }
         if let clip = metaClip { t["clip"] = clip }
         if let metadata = metaMetadata { t["metadata"] = metadata }
+        t["isStream"] = isStream
+        if isStream { t["streamType"] = "radio" }
+        if let mountpoint = streamMountpoint { t["mountpoint"] = mountpoint }
         return t
     }
 
     private static func statePayload() -> [String: Any] {
-        [
+        var state: [String: Any] = [
             "track": trackPayload(),
             "position": positionSeconds(),
             "duration": durationSeconds(),
@@ -96,6 +99,10 @@ class AudioFunctions: NSObject {
             "playlistIndex": playlistIndex,
             "playlistTotal": playlist.count
         ]
+        state["isStream"] = isStream
+        if isStream { state["streamType"] = "radio" }
+        if let mountpoint = streamMountpoint { state["mountpoint"] = mountpoint }
+        return state
     }
 
     private static func positionSeconds() -> Double {
@@ -104,8 +111,17 @@ class AudioFunctions: NSObject {
     }
 
     private static func durationSeconds() -> Double {
+        guard !isStream else { return 0.0 }
         let d = playerItem?.duration.seconds ?? 0.0
         return (d.isNaN || d.isInfinite) ? 0.0 : d
+    }
+
+    private static func updateStreamState(from track: [String: Any]) {
+        let streamType = (track["streamType"] as? String)?.lowercased()
+        let explicitStream = track["isStream"] as? Bool
+        streamMountpoint = track["mountpoint"] as? String
+        isStream = explicitStream ?? (streamType == "radio" || streamMountpoint != nil)
+        if !isStream { streamMountpoint = nil }
     }
 
     // MARK: - Initialization
@@ -124,7 +140,11 @@ class AudioFunctions: NSObject {
         var info: [String: Any] = [MPMediaItemPropertyTitle: title]
         if let artist = metaArtist { info[MPMediaItemPropertyArtist] = artist }
         if let album = metaAlbum { info[MPMediaItemPropertyAlbumTitle] = album }
-        if let duration = metaDuration { info[MPMediaItemPropertyPlaybackDuration] = duration }
+        if isStream {
+            info[MPNowPlayingInfoPropertyIsLiveStream] = true
+        } else if let duration = metaDuration {
+            info[MPMediaItemPropertyPlaybackDuration] = duration
+        }
         info[MPNowPlayingInfoPropertyElapsedPlaybackTime] = positionSeconds()
         info[MPNowPlayingInfoPropertyPlaybackRate] = player?.rate ?? 0.0
         MPNowPlayingInfoCenter.default().nowPlayingInfo = info
@@ -161,6 +181,8 @@ class AudioFunctions: NSObject {
 
     private static func resetPlayer() {
         isBuffering = false
+        isStream = false
+        streamMountpoint = nil
         cancelSleepTimer()
         stopProgressTimer()
         player?.pause()
@@ -254,7 +276,14 @@ class AudioFunctions: NSObject {
             if playbackRate != 1.0 { player?.rate = playbackRate }
         }
         
-        applyInitialMetadata(track)
+        updateStreamState(from: track)
+        metaTitle = track["title"] as? String
+        metaArtist = track["artist"] as? String
+        metaAlbum = track["album"] as? String
+        metaDuration = (track["duration"] as? NSNumber)?.doubleValue
+        metaArtworkSource = track["artwork"] as? String
+        metaClip = track["clip"] as? String
+        metaMetadata = track["metadata"] as? [String: Any]
 
         var changedPayload: [String: Any] = ["index": index, "reason": reason, "track": trackPayload()]
         if lastIdx >= 0 {
@@ -479,16 +508,9 @@ class AudioFunctions: NSObject {
         if let artwork = parameters["artwork"] as? String { metaArtworkSource = artwork }
         if includeClassicalFields, let clip = parameters["clip"] as? String { metaClip = clip }
         if let metadata = parameters["metadata"] as? [String: Any] { metaMetadata = metadata }
-    }
-
-    @objc static func SetMetadata(_ parameters: [String: Any]) -> [String: Any] {
-        applyMetadata(parameters)
-        refreshNowPlayingInfo()
-        return ["success": true]
-    }
-
-    @objc static func UpdateStreamMetadata(_ parameters: [String: Any]) -> [String: Any] {
-        applyMetadata(parameters, includeClassicalFields: false)
+        if parameters.keys.contains("isStream") || parameters.keys.contains("streamType") || parameters.keys.contains("mountpoint") {
+            updateStreamState(from: parameters)
+        }
         refreshNowPlayingInfo()
         sendEvent("StreamMetadataChanged", ["track": trackPayload(), "metadata": parameters])
         return ["success": true]
